@@ -1,63 +1,56 @@
 """
-所有采集器的抽象基类。
-子类只需实现 fetch() 方法，返回 list[RawArticle]。
+对应的fetchid对应数据库爬虫模型id，如果是fetch_all需要按照最低水位线全量爬取RawArticle。fetch_keyword则按照对应关键词id查询水位线爬取RawArticle。抽象成具体aicoding指令
 """
 from abc import ABC, abstractmethod
+from typing import List
 from datetime import datetime
 from models.schemas import RawArticle
-from storage.state_store import StateStore
-from utils.http_client import RateLimitedClient
-from utils.logger import get_logger
-
+from utils.logger import get_logger # L2 模型
 
 class BaseFetcher(ABC):
-    """
-    子类约定：
-    - self.source_name  必须唯一，用于 StateStore key
-    - fetch(since)      增量抓取，返回 since 之后的新文章
-    - ping()            连通性测试，返回 True/False
-    """
-
-    def __init__(self, state_store: StateStore):
-        self.state_store = state_store
-        self.http = RateLimitedClient()
+    def __init__(self, model_id: int, db_manager):
+        self.model_id = model_id
+        self.db = db_manager
+        # 从表 9 加载基础配置 (L1/L4)
+        self.config = self.db.get_model_config(model_id) 
         self.logger = get_logger(self.__class__.__name__)
-        self.source_name: str = "base"  # 子类覆盖
 
     @abstractmethod
-    def fetch(self, since: datetime | None = None) -> list[RawArticle]:
+    def _run_spider(self, since_time: datetime) -> List[RawArticle]:
         """
-        增量抓取。
-        since=None 时执行全量抓取（首次运行）。
-        返回发布时间 > since 的文章列表。
+        子类必须实现的具体爬虫逻辑（如 BeautifulSoup 解析、翻页）
         """
-        ...
+        pass
+    
+    # def _run_spider_keyword(self, keyword_info: dict, since_time: datetime) -> List[RawArticle]:
+    #     """
+    #     子类必须实现的具体爬虫逻辑（如 BeautifulSoup 解析、翻页）
+    #     """
+    #     pass
 
-    def ping(self) -> bool:
-        """连通性测试，默认 GET 首页"""
-        try:
-            self.http.get(self._base_url)
-            return True
-        except Exception as e:
-            self.logger.warning(f"[{self.source_name}] ping失败: {e}")
-            return False
-
-    def run_incremental(self) -> list[RawArticle]:
+    def fetch_all(self) -> List[RawArticle]:
         """
-        由 Pipeline 调用。
-        自动读取上次时间戳，抓取后更新时间戳。
+        逻辑：按照模型内关键词的最低水位线全量爬取
         """
-        since = self.state_store.get_last_fetch_time(self.source_name)
-        self.logger.info(
-            f"[{self.source_name}] 增量抓取，since={since or '全量'}"
-        )
-        articles = self.fetch(since=since)
-        if articles:
-            self.state_store.update_last_fetch_time(self.source_name)
-        self.logger.info(f"[{self.source_name}] 本次抓取 {len(articles)} 条")
-        return articles
+        # 1. 获取该模型所有关键词及其最小水位线
+        keywords_info = self.db.get_keywords_by_model(self.model_id)
+        if not keywords_info: return []
+        
+        min_watermark = min(k['incremental_spider_time'] for k in keywords_info)
+        
+        # 2. 聚合关键词水位线进行爬取 (或循环爬取)
+        all_results = self._run_spider(min_watermark)
+       
+        return self._deduplicate_raw(all_results)
 
-    @property
-    def _base_url(self) -> str:
-        """子类覆盖，用于 ping()"""
-        return ""
+    # def fetch_keyword(self, keyword_id: int) -> List[RawArticle]:
+    #     """
+    #     逻辑：按照特定关键词 ID 爬取
+    #     """
+    #     k_info = self.db.get_keyword_info(keyword_id)
+    #     return self._run_spider_keyword(k_info, k_info['incremental_spider_time'])
+
+    def _deduplicate_raw(self, articles: List[RawArticle]) -> List[RawArticle]:
+        # 抓取层的初步 URL 去重，减轻 Processor 压力
+        seen = set()
+        return [a for a in articles if not (a.url in seen or seen.add(a.url))]

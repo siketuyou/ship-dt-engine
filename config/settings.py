@@ -35,11 +35,12 @@ class Settings(BaseSettings):
     JAVA_API_BASE_URL: str = "http://localhost:8080"
     JAVA_API_TOKEN: str = ""                    # 从环境变量注入
 
-    # ── 关键词（用于一级过滤） ─────────────────────
-    FILTER_KEYWORDS: list[str] = [
-        "数字化转型", "智能制造", "工业互联网", "数字孪生",
-        "MES", "PLM", "CAD", "CAE", "5G", "自动化", "船舶",
-    ]
+    # ── 数据库配置 (MySQL) ────────────────────────
+    DB_HOST: str = "localhost"
+    DB_PORT: int = 3306
+    DB_USER: str = "root"
+    DB_PASSWORD: str = "Yxy201062"
+    DB_NAME: str = "ship_digital_db"
 
     class Config:
         env_file = BASE_DIR / ".env"

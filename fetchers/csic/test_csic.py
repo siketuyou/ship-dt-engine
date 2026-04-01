@@ -11,15 +11,34 @@ if str(PROJECT_ROOT) not in sys.path:
 # 如果放在独立文件中，请取消注释下面的导入
 from config.settings import settings
 from fetchers.csic.csic_fecther import CsicFetcher
+from fetchers.csic.csic_config import CHANNELS
 
 # ── 1. 模拟依赖 (方便独立测试) ─────────────────────────
-class MockStateStore:
-    """用于本地测试的虚拟状态存储，避免连接真实数据库"""
-    def get_last_fetch_time(self, source_name: str):
-        return None
-    
-    def update_last_fetch_time(self, source_name: str):
-        pass
+class MockDbManager:
+    """用于本地测试的虚拟数据库接口，适配 BaseFetcher 依赖的方法。"""
+
+    def __init__(self):
+        self._keywords = [
+            {
+                "id": idx + 1,
+                "keyword": cfg.name,
+                "keyword_name": cfg.name,
+                "incremental_spider_time": datetime(2025, 3, 26),
+            }
+            for idx, cfg in enumerate(CHANNELS)
+        ]
+
+    def get_model_config(self, model_id: int):
+        return {"m_reptile_model_name": "csic_news"}
+
+    def get_keywords_by_model(self, model_id: int):
+        return self._keywords
+
+    def get_keyword_info(self, keyword_id: int):
+        for kw in self._keywords:
+            if kw["id"] == keyword_id:
+                return kw
+        return self._keywords[0]
 
 
 # ── 2. 主测试函数 ────────────────────────────────────
@@ -37,23 +56,16 @@ def main():
 
     # 初始化依赖与采集器
     settings.CSIC_BASE_URL = "http://www.cssc.net.cn"
-    state_store = MockStateStore()
-    fetcher = CsicFetcher(state_store=state_store)
+    db_manager = MockDbManager()
+    fetcher = CsicFetcher(model_id=1, db_manager=db_manager)
 
     # 设定题目要求的水位线：2022-06-06
     since_date = datetime(2025, 3, 26)
     print(f"[*] 设定的全局水位线 (since): {since_date.strftime('%Y-%m-%d')}\n")
 
-    # 测试目标网站连通性
-    print("[*] 正在测试目标网站连通性...")
-    if not fetcher.ping():
-        print("[!] 连通性测试失败，请检查网络环境或目标网站状态。")
-        return
-    print("[+] 连通性测试通过！\n")
-
     # 执行抓取
     try:
-        articles = fetcher.fetch(since=since_date)
+        articles = fetcher.fetch_all()
     except Exception as e:
         print(f"\n[!] 抓取过程中发生致命异常: {e}")
         return
@@ -72,11 +84,6 @@ def main():
         pub_time_str = art.pub_time.strftime('%Y-%m-%d') if art.pub_time else "未知时间"
         print(f"{i:3d}. [{pub_time_str}] {art.title}")
         print(f"     🔗 链接: {art.url}")
-        
-        # 截取前 60 个字符作为正文预览，去掉换行符保持整洁
-        content_preview = art.content[:60].replace('\n', ' ') + "..." if art.content else "（无正文）"
-        print(f"     📄 正文: {content_preview}")
-        
         if art.img_urls:
             print(f"     🖼️ 图片: 包含 {len(art.img_urls)} 张图")
             # 打印第一张图片链接作为抽查
