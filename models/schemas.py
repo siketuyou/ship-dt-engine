@@ -38,6 +38,7 @@ class RawArticle(BaseModel):
     
     url: str               # 列表页中发现的原始跳转链接
     title: Optional[str] = None
+    content: Optional[str] = None
     content_url: Optional[str] = None  # 降维后的正文引用地址（通常与 url 一致，或为 API 地址）
     
     pub_time: Optional[datetime] = None
@@ -46,7 +47,17 @@ class RawArticle(BaseModel):
     
     raw_location: Optional[str] = None  # 文本中初步识别的地名
     fetched_at: datetime = Field(default_factory=datetime.utcnow)
-
+    
+class FilteredItem(BaseModel):
+    """
+    一篇通过过滤的文章 + 命中的关键词 id 列表。
+    keyword_ids: 在该文章 title/content 中被 AC 自动机命中的关键词 id，
+                 可能是模型关键词的子集（部分命中）。
+    """
+    article: RawArticle
+    content: str                       
+    matched_keyword_ids: List[int]
+ 
 
 class CleanedItem(BaseModel):
     """清洗+去重后，字段更收敛"""

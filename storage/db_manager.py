@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
@@ -20,15 +22,14 @@ class DatabaseManager:
         self.logger = logging.getLogger(__name__)
 
     # --- 基础通用接口 ---
-
-    def query(self, sql: str, params: tuple = ()) -> List[Dict[str, Any]]:
+    def query(self, sql: str, params: Union[Dict[str, Any], tuple] = ()) -> List[Dict[str, Any]]:
         """执行 SELECT 查询，返回字典列表"""
         with self.engine.connect() as conn:
             result = conn.execute(text(sql), params)
             # 将结果集转为 List[Dict] 方便 Pydantic 转换
             return [dict(row._mapping) for row in result]
 
-    def execute(self, sql: str, params: Optional[Dict[str, Any] | tuple] = ()) -> int:
+    def execute(self, sql: str, params: Optional[Union[Dict[str, Any], tuple]] = ()) -> int:
         """执行 INSERT/UPDATE/DELETE，返回影响行数"""
         with self.engine.begin() as conn: # 使用 begin 自动开启事务
             result = conn.execute(text(sql), params)
@@ -68,3 +69,42 @@ class DatabaseManager:
         sql = f"INSERT INTO m_device_news ({fields}) VALUES ({placeholders})"
         
         return self.execute(sql, data)
+    def get_keywords_by_model(self, model_id: int) -> List[Dict[str, Any]]:
+        """
+        查询指定模型下所有启用且未删除的关键词。
+        返回字段对齐表10：keyword_id, model_id, keyword_name,
+                          incremental_spider_time, use_flag
+        """
+        sql = """
+            SELECT keyword_id,
+                   model_id,
+                   keyword_name,
+                   incremental_spider_time,
+                   use_flag
+            FROM   keyword
+            WHERE  model_id = :model_id
+              AND  use_flag  = 1
+              AND  deleted   = 0
+        """
+        return self.query(sql, {"model_id": model_id}) 
+
+    def get_model_config(self, model_id: int) -> Dict[str, Any]:
+        """
+        查询表9爬虫模型配置，返回单条记录。
+        找不到或已删除时抛出 ValueError。
+        """
+        sql = """
+            SELECT m_reptile_model_id   AS model_id,
+                   m_reptile_model_name AS model_name,
+                   m_reptile_model_web  AS target_url,
+                   m_reptile_model_state AS state,
+                   m_reptile_model_address AS model_address,
+                   m_reptile_model_time AS created_at
+            FROM   reptile_model
+            WHERE  m_reptile_model_id = :model_id
+              AND  deleted = 0
+        """
+        rows = self.query(sql, {"model_id": model_id})
+        if not rows:
+            raise ValueError(f"model_id={model_id} 不存在或已删除")
+        return rows[0]

@@ -10,7 +10,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 # 如果放在独立文件中，请取消注释下面的导入
 from config.settings import settings
-from fetchers.csic.csic_fecther import CsicFetcher
+from fetchers.csic.csic_fetcher import CsicFetcher
 from fetchers.csic.csic_config import CHANNELS
 
 # ── 1. 模拟依赖 (方便独立测试) ─────────────────────────

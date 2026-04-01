@@ -73,14 +73,10 @@ class CsicFetcher(BaseFetcher):
     # =========================================================================
     # 内部实现
     # =========================================================================
-
-    def _fetch_column(
-        self, config: ColumnConfig, since: Optional[datetime]
-    ) -> list[RawArticle]:
-        """处理单个栏目的翻页与详情抓取"""
+    def _fetch_column(self, config: ColumnConfig, since: Optional[datetime]) -> list[RawArticle]:
         collected = []
 
-        # ── Step 1: 请求首页并获取总页数 ──
+        # Step 1: 请求首页，只用来解析总页数，不解析列表
         try:
             resp = self.http.get(config.list_url)
             resp.raise_for_status()
@@ -90,60 +86,83 @@ class CsicFetcher(BaseFetcher):
 
         html = self._smart_decode(resp)
         soup = BeautifulSoup(html, "lxml")
-        total_pages = self._get_total_pages(soup)
-        self.logger.debug(f"[csic] {config.name} 解析到总页数: {total_pages}")
+        total_pages, page_param = self._get_page_info(soup)
 
-        # ── Step 2: 逐页遍历列表 ──
+        if not page_param:
+            self.logger.warning(f"[csic] {config.name} 无法解析 page_param，跳过")
+            return collected
+
+        self.logger.info(f"[csic] {config.name} 总页数={total_pages} page_param={page_param}")
+
+        # Step 2: 从第1页翻页片段开始遍历（首页列表是 JS 渲染，片段才有真实数据）
+        # 第1页片段 offset = total_pages，即 index_{param}_{total_pages}.html
         stop_crawling = False
+        # 首页静态列表先解析（片段从第2页开始）
+        items = self._parse_list_items(soup, config.selectors, is_fragment=False)
+        for item in items:
+            pub_time = item["pub_time"]
+            if since and pub_time and pub_time <= since:
+                stop_crawling = True
+                break
+            content, img_urls = self._fetch_detail(item["url"], config.selectors)
+            collected.append(RawArticle(
+                model_id=self.model_id,
+                keyword_id=None,
+                source="csic_news",
+                url=item["url"],
+                title=item["title"],
+                content=content,
+                pub_time=pub_time,
+                img_urls=img_urls,
+            ))
 
-        for page_num in range(1, total_pages + 1):
+        for page_num in range(2, total_pages + 1):
             if stop_crawling:
                 break
 
-            is_fragment = False
-            if page_num > 1:
-                page_url = config.page_url(page_num, total_pages)
-                try:
-                    resp = self.http.get(page_url)
-                    resp.raise_for_status()
-                    html = self._smart_decode(resp)
-                    soup = BeautifulSoup(html, "lxml")
-                    is_fragment = True
-                except Exception as e:
-                    self.logger.warning(f"[csic] 第 {page_num} 页请求失败，跳过: {e}")
-                    continue
+            # 所有页都用片段 URL（包括第1页）
+            offset = total_pages - (page_num - 1)
+            frag_url = (
+                f"{settings.CSIC_BASE_URL}/{config.channel_id}/{config.column_id}"
+                f"/index_{page_param}_{offset}.html"
+            )
+            try:
+                resp = self.http.get(frag_url)
+                resp.raise_for_status()
+                html = self._smart_decode(resp)
+                frag_soup = BeautifulSoup(html, "lxml")
+            except Exception as e:
+                self.logger.warning(f"[csic] 第{page_num}页片段请求失败，跳过: {e}")
+                continue
 
-            items = self._parse_list_items(soup, config.selectors, is_fragment)
+            items = self._parse_list_items(frag_soup, config.selectors, is_fragment=True)
             if not items:
+                self.logger.debug(f"[csic] 第{page_num}页无条目，停止")
                 break
 
             for item in items:
                 pub_time = item["pub_time"]
-
-                # 增量水位线判断（在发起详情请求前提前截断）
                 if since and pub_time and pub_time <= since:
                     self.logger.info(
-                        f"[csic] {config.name} 命中水位线 ({pub_time} <= {since})，本栏目停止"
+                        f"[csic] {config.name} 命中水位线 ({pub_time} <= {since})，停止"
                     )
                     stop_crawling = True
                     break
 
-                # ── Step 3: 下钻获取详情页正文与图片 ──
                 content, img_urls = self._fetch_detail(item["url"], config.selectors)
-
                 article = RawArticle(
                     model_id=self.model_id,
                     keyword_id=None,
                     source="csic_news",
-                    url=item["url"],          # ← 补全原来缺失的字段
+                    url=item["url"],
                     title=item["title"],
+                    content=content,
                     pub_time=pub_time,
                     img_urls=img_urls,
                 )
                 collected.append(article)
 
         return collected
-
     def _fetch_detail(
         self, url: str, selectors: Selectors
     ) -> tuple[str, list[str]]:
@@ -216,21 +235,15 @@ class CsicFetcher(BaseFetcher):
 
         return resp.content.decode("utf-8", errors="replace")
 
-    def _get_total_pages(self, soup: BeautifulSoup) -> int:
-        pag = soup.select_one("#pag_164, td.pages")
-        if pag:
-            m = re.search(r"总页数[：:]\s*(\d+)", pag.get_text())
-            if m:
-                return int(m.group(1))
-
+    def _get_page_info(self, soup: BeautifulSoup) -> tuple[int, str]:
         for script in soup.find_all("script"):
             text = script.string or ""
-            m = re.search(
-                r"(?:totalPage|pageCount|total_pages?)\s*[=:]\s*(\d+)", text
-            )
-            if m:
-                return int(m.group(1))
-        return 1
+            # 真实总页数在 cookie 赋值里：document.cookie="maxPageNum6204=218"
+            m_pages = re.search(r'document\.cookie\s*=\s*"maxPageNum\d+=(\d+)"', text)
+            m_param = re.search(r'var\s+purl\s*=\s*["\'].*?index_(\d+)["\']', text)
+            if m_pages and m_param:
+                return int(m_pages.group(1)), m_param.group(1)
+        return 1, ""
 
     def _parse_time(self, text: str) -> Optional[datetime]:
         text = text.strip()

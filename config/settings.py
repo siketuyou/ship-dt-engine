@@ -10,7 +10,6 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     DATA_DIR: Path = BASE_DIR / "data"          # CSV / 媒体文件输出根目录
     STATE_FILE: Path = BASE_DIR / "data" / "state.json"  # 增量时间戳存储
-
     # ── HTTP ──────────────────────────────────────
     REQUEST_TIMEOUT: int = 30                   # 秒
     REQUEST_DELAY: float = 1.5                  # 请求间隔（礼貌延迟）
@@ -20,7 +19,7 @@ class Settings(BaseSettings):
     )
 
     # ── 采集目标（可按需扩展） ─────────────────────
-    CSIC_BASE_URL: str = "https://www.cssc.net.cn"
+    CSIC_BASE_URL: str = "http://www.cssc.net.cn"
     GOV_POLICY_BASE_URL: str = "https://www.miit.gov.cn"
 
     # ── AI / Ollama ────────────────────────────────

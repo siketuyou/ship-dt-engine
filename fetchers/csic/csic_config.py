@@ -22,8 +22,7 @@
 """
 from dataclasses import dataclass, field
 
-# 中船 CMS 翻页固定参数，实测确认，与 page_size 无关
-PAGE_PARAM = 164
+
 
 
 @dataclass
@@ -59,30 +58,23 @@ class ColumnConfig:
         from config.settings import settings
         return f"{settings.CSIC_BASE_URL}/{self.channel_id}/{self.column_id}/index.html"
 
-    def page_url(self, page_index: int, total_pages: int) -> str:
-        """
-        第 N 页（1-based）的 URL。
-        offset = total_pages - (page_index - 1)
-
-        注意：参数是 total_pages（总页数），不是 total_articles（总文章数）。
-        """
+    def page_url(self, page_index: int, total_pages: int, page_param: str) -> str:
         from config.settings import settings
         if page_index == 1:
             return self.list_url
         offset = total_pages - (page_index - 1)
         return (
             f"{settings.CSIC_BASE_URL}/{self.channel_id}/{self.column_id}"
-            f"/index_{PAGE_PARAM}_{offset}.html"
+            f"/index_{page_param}_{offset}.html"
         )
-
 
 # ════════════════════════════════════════════════
 # 频道与栏目注册表
 # ════════════════════════════════════════════════
 
 _DEFAULT_SEL = Selectors(
-    list_item          = "#comp_164 > ul > li",
-    list_item_fragment = "li",
+    list_item          = "ul.olist_list > li",   # 改这里
+    list_item_fragment = "ul.olist_list > li",   # 改这里
     title              = "a",
     pub_time           = "span",
     body               = "div.article_con",
