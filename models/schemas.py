@@ -73,38 +73,52 @@ class CleanedItem(BaseModel):
     fetched_at: datetime
 
 
+class LLMExtractResult(BaseModel):
+    """LLM 返回的原始提取结果，字段名与 Prompt 输出模板完全对应。"""
+    device_name: str = Field(default="未知设备")
+    device_use_year: Optional[int] = None
+    device_price: Optional[str] = None
+    device_using_unit: Optional[str] = None
+    device_location: Optional[str] = None
+    device_introduce: str = Field(default="")
+
+    # 三级维度（携带 id，直接可用）
+    dim1_id: Optional[int] = None
+    dim1_name: Optional[str] = None
+    dim2_id: Optional[int] = None
+    dim2_name: Optional[str] = None
+    dim3_id: Optional[int] = None          # 新方向时为 null
+    dim3_name: Optional[str] = None        # 新方向时为 LLM 建议名称
+    dim3_is_new: bool = False
+
+    country_name: Optional[str] = None
+
+
 class EnrichedItem(BaseModel):
-    """AI提取后的完整条目，深度适配数据库 device 表"""
-    # 基础元数据
-    source: str
-    url: str = Field(..., alias="device_news_link")
-    title: str = Field(..., alias="device_news_title")
-    pub_time: Optional[datetime] = Field(None, alias="device_news_time")
-    fetched_at: datetime = Field(default_factory=datetime.utcnow, alias="device_insql_time")
-
-    # AI 结构化字段 -> 对应 device 表核心字段
-    company_name: Optional[str] = Field(None, alias="device_using_unit") # 使用单位
-    device_name: Optional[str] = None                                    # 对应 device_name (通常取 title 或主体)
-    
-    # 映射外键名称 (L8 逻辑中需根据名称查询 ID 或由 AI 直接分类)
-    level1_category: str = "行业动态数据"  # 对应 device_class_id 的名称
-    level2_category: Optional[str] = None # 对应 device_style_id 的名称
-    level3_category: Optional[str] = None # 对应 device_type_id 的名称
-    
-    country: str = Field("中国", alias="country_name") # 对应 device_country_id 的名称
-    
-    invest_cost: Optional[str] = Field(None, alias="device_price")
-    use_year: Optional[int] = Field(None, alias="device_use_year")
-    effect_description: Optional[str] = Field(None, alias="device_introduce") # 详情介绍
-    
-    # 地理信息
-    location_name: Optional[str] = Field(None, alias="device_location")
-    longitude: Optional[str] = Field(None, alias="device_longitude")
-    latitude: Optional[str] = Field(None, alias="device_latitude")
-
-    # 媒体文件处理后的 URL (由 L8 上传后获得)
-    device_img: Optional[str] = None 
+    """完整条目，直接映射 device 表字段。"""
+    # ── device 表核心字段 ──────────────────────────────────────────────
+    device_name: str
+    device_class_id: Optional[int] = None      # 一级维度 id → device_class.device_class_id
+    device_style_id: Optional[int] = None      # 二级维度 id → device_style.device_style_id
+    device_type_id: Optional[int] = None       # 三级方向 id → device_type.device_type_id（新方向为 None）
+    device_use_year: Optional[int] = None
+    device_price: Optional[str] = None
+    device_using_unit: Optional[str] = None
+    device_country_id: Optional[int] = None
+    device_location: Optional[str] = None
+    device_longitude: Optional[str] = None
+    device_latitude: Optional[str] = None
+    device_img: Optional[str] = None
     device_video: Optional[str] = None
+    device_introduce: Optional[str] = None
+    device_news_link: str
+    device_news_title: str
+    device_news_time: Optional[datetime] = None
+    device_insql_time: datetime = Field(default_factory=datetime.now)
+    device_changesql_time: datetime = Field(default_factory=datetime.now)
+    audit_flag: int = Field(default=0)
+    deleted: int = Field(default=0)
 
-    class Config:
-        populate_by_name = True # 允许使用别名或原始字段名赋值
+    # ── 扩展元字段（不入 device 表，供后续流程消费）──────────────────
+    dim3_suggest_name: Optional[str] = None
+    dim3_suggest_style_id: Optional[int] = None   # ← 确保此字段存在且名称一致

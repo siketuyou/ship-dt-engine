@@ -108,3 +108,7 @@ class DatabaseManager:
         if not rows:
             raise ValueError(f"model_id={model_id} 不存在或已删除")
         return rows[0]
+    def get_raw_conn(self):
+        """返回底层 pymysql 原生连接，供需要 cursor 的模块使用。"""
+        return self.engine.raw_connection()
+        
