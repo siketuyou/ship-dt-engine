@@ -272,7 +272,6 @@ def add_schedule(req: ScheduleRequest):
         "cron":    f"{req.cron_hour}:{req.cron_minute}",
     }
 
-
 @app.delete("/scheduler/remove/{model_id}")
 def remove_schedule(model_id: int):
     """移除定时任务"""
