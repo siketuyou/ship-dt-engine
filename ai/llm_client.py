@@ -6,7 +6,7 @@ from typing import Optional
 from utils.logger import get_logger
 
 OLLAMA_BASE_URL = "http://localhost:11434"
-DEFAULT_MODEL = "deepseek-r1:7b"   # 按你实际拉取的 tag 修改
+DEFAULT_MODEL = "deepseek-r1:8b"   
 
 
 class OllamaClient:
@@ -19,7 +19,7 @@ class OllamaClient:
         self,
         model: str = DEFAULT_MODEL,
         base_url: str = OLLAMA_BASE_URL,
-        timeout: float = 120.0,
+        timeout: float = 300.0,
     ):
         self.model = model
         self.base_url = base_url.rstrip("/")

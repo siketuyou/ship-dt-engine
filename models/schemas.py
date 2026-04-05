@@ -72,35 +72,29 @@ class CleanedItem(BaseModel):
     raw_location: Optional[str] = None
     fetched_at: datetime
 
-
 class LLMExtractResult(BaseModel):
-    """LLM 返回的原始提取结果，字段名与 Prompt 输出模板完全对应。"""
-    device_name: str = Field(default="未知设备")
+    is_target_info: bool = Field(default=True)
+    device_name: Optional[str] = None
     device_use_year: Optional[int] = None
     device_price: Optional[str] = None
     device_using_unit: Optional[str] = None
     device_location: Optional[str] = None
-    device_introduce: str = Field(default="")
-
-    # 三级维度（携带 id，直接可用）
+    device_introduce: Optional[str] = None
     dim1_id: Optional[int] = None
     dim1_name: Optional[str] = None
     dim2_id: Optional[int] = None
     dim2_name: Optional[str] = None
-    dim3_id: Optional[int] = None          # 新方向时为 null
-    dim3_name: Optional[str] = None        # 新方向时为 LLM 建议名称
-    dim3_is_new: bool = False
-
+    dim3_id: Optional[int] = None          
+    dim3_name: Optional[str] = None
+    device_keywords: Optional[str] = None  # 新增：具体技术关键词，逗号分隔
     country_name: Optional[str] = None
 
 
 class EnrichedItem(BaseModel):
-    """完整条目，直接映射 device 表字段。"""
-    # ── device 表核心字段 ──────────────────────────────────────────────
     device_name: str
-    device_class_id: Optional[int] = None      # 一级维度 id → device_class.device_class_id
-    device_style_id: Optional[int] = None      # 二级维度 id → device_style.device_style_id
-    device_type_id: Optional[int] = None       # 三级方向 id → device_type.device_type_id（新方向为 None）
+    device_class_id: Optional[int] = None
+    device_style_id: Optional[int] = None
+    device_type_id: Optional[int] = None
     device_use_year: Optional[int] = None
     device_price: Optional[str] = None
     device_using_unit: Optional[str] = None
@@ -111,6 +105,7 @@ class EnrichedItem(BaseModel):
     device_img: Optional[str] = None
     device_video: Optional[str] = None
     device_introduce: Optional[str] = None
+    device_keywords: Optional[str] = None  # 新增
     device_news_link: str
     device_news_title: str
     device_news_time: Optional[datetime] = None
@@ -118,7 +113,3 @@ class EnrichedItem(BaseModel):
     device_changesql_time: datetime = Field(default_factory=datetime.now)
     audit_flag: int = Field(default=0)
     deleted: int = Field(default=0)
-
-    # ── 扩展元字段（不入 device 表，供后续流程消费）──────────────────
-    dim3_suggest_name: Optional[str] = None
-    dim3_suggest_style_id: Optional[int] = None   # ← 确保此字段存在且名称一致

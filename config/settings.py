@@ -3,7 +3,8 @@ from pydantic_settings import BaseSettings
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-
+AMAP_URL = "https://restapi.amap.com/v3/geocode/geo"
+AMAP_KEY  = "f19a6e08495d1c7f82c76a8e55914a4d"  
 
 class Settings(BaseSettings):
     # ── 基础 ──────────────────────────────────────
@@ -17,14 +18,14 @@ class Settings(BaseSettings):
     USER_AGENT: str = (
         "Mozilla/5.0 (compatible; CSIC-Spider/1.0; research-purpose)"
     )
-
+       
     # ── 采集目标（可按需扩展） ─────────────────────
     CSIC_BASE_URL: str = "http://www.cssc.net.cn"
     GOV_POLICY_BASE_URL: str = "https://www.miit.gov.cn"
 
     # ── AI / Ollama ────────────────────────────────
     OLLAMA_BASE_URL: str = "http://localhost:11434"
-    OLLAMA_MODEL: str = "deepseek-r1:7b"
+    OLLAMA_MODEL: str = "deepseek-r1:8b"
     OLLAMA_TIMEOUT: int = 120
 
     # ── 高德地图 GEO API ───────────────────────────

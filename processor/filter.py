@@ -29,7 +29,8 @@ from models.schemas import RawArticle, KeywordConfig
 from processor.ac_engine import KeywordAC
 from models.schemas import FilteredItem
 from utils.logger import get_logger
-
+# filter.py 顶部新增导入
+from processor.ac_engine import KeywordAC, SemanticMatcher
 
 # 抓详情页的超时与重试
 _FETCH_TIMEOUT = 10        # 秒
@@ -47,31 +48,34 @@ class ArticleFilter:
     一个 model_id 对应一个实例，构造时查一次数据库，整批复用。
     """
 
-    def __init__(self, model_id: int, db_manager):
+    def __init__(self, model_id: int, db_manager, semantic_threshold: float = 0.65):
         self.model_id  = model_id
         self.db        = db_manager
         self.logger    = get_logger(self.__class__.__name__)
 
-        # 加载关键词（已在 SQL 层过滤 use_flag=1 & deleted=0）
         raw_kws: List[Dict] = self.db.get_keywords_by_model(model_id)
         self._keywords: List[KeywordConfig] = [KeywordConfig(**kw) for kw in raw_kws]
 
         if not self._keywords:
             self.logger.warning(f"model_id={model_id} 无活跃关键词，所有文章将被丢弃")
 
-        # 关1：预计算最低水位线
         self._min_watermark: Optional[datetime] = self._calc_min_watermark()
 
-        # 关2：构建 AC 自动机
-        self._ac = KeywordAC.build({kw.keyword_id: kw.keyword_name for kw in self._keywords})
+        kw_map = {kw.keyword_id: kw.keyword_name for kw in self._keywords}
 
-        # 复用 HTTP Session
+        # 关2-A：AC 精确/变体匹配（快）
+        self._ac = KeywordAC.build(kw_map)
+
+        # 关2-B：语义向量兜底（慢，仅 AC 未命中时触发）
+        self._semantic = SemanticMatcher.build(kw_map, threshold=semantic_threshold)
+
         self._session = requests.Session()
         self._session.headers.update({"User-Agent": _DEFAULT_UA})
 
         self.logger.info(
             f"model_id={model_id} 过滤器就绪 | "
-            f"关键词={len(self._keywords)} | 水位线={self._min_watermark}"
+            f"关键词={len(self._keywords)} | 水位线={self._min_watermark} | "
+            f"语义阈值={semantic_threshold}"
         )
 
     # ------------------------------------------------------------------
@@ -120,23 +124,38 @@ class ArticleFilter:
         return passed
 
     # ------------------------------------------------------------------
-    # 关2：抓详情页 + AC 匹配
+    # 关2：抓详情页 → AC → （未命中）→ 语义
     # ------------------------------------------------------------------
 
     def _stage2_fetch_and_match(self, articles: List[RawArticle]) -> List[FilteredItem]:
         result: List[FilteredItem] = []
+
         for article in articles:
-            content = self._fetch_content(article.url)
+            content     = self._fetch_content(article.url)
             search_text = self._build_search_text(article.title, content)
+
+            # ── 第一道：AC 精确匹配 ──────────────────────────────────
             matched_ids = self._ac.search(search_text)
+
+            if matched_ids:
+                self.logger.debug(f"AC命中 {matched_ids}: {article.url[:80]}")
+
+            else:
+                # ── 第二道：语义向量兜底 ─────────────────────────────
+                matched_ids = self._semantic.search(search_text)
+
+                if matched_ids:
+                    self.logger.debug(f"语义命中 {matched_ids}: {article.url[:80]}")
+                else:
+                    self.logger.debug(f"AC+语义均未命中，丢弃: {article.url[:80]}")
+
             if matched_ids:
                 result.append(FilteredItem(
                     article=article,
                     content=content,
                     matched_keyword_ids=matched_ids,
                 ))
-            else:
-                self.logger.debug(f"关2 AC未命中，丢弃: {article.url[:80]}")
+
         return result
 
     def _fetch_content(self, url: str) -> str:
