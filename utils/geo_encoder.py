@@ -4,7 +4,7 @@ from __future__ import annotations
 import httpx
 from typing import Optional, Tuple
 from utils.logger import get_logger
-from config.settings import AMAP_KEY,AMAP_URL
+from config.settings import settings
 logger = get_logger("GeoEncoder")
 
 
@@ -19,8 +19,8 @@ def geocode(address: str) -> Tuple[Optional[str], Optional[str]]:
         return None, None
     try:
         resp = httpx.get(
-            AMAP_URL,
-            params={"key": AMAP_KEY, "address": address, "output": "JSON"},
+            settings.AMAP_URL,
+            params={"key": settings.AMAP_KEY, "address": address, "output": "JSON"},
             timeout=5.0,
         )
         resp.raise_for_status()

@@ -3,10 +3,16 @@ import json
 import re
 import httpx
 from typing import Optional
-from utils.logger import get_logger
+import sys
+from pathlib import Path
 
-OLLAMA_BASE_URL = "http://localhost:11434"
-DEFAULT_MODEL = "deepseek-r1:8b"   
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+from utils.logger import get_logger
+from config.settings import settings
+
+
 
 
 class OllamaClient:
@@ -17,9 +23,9 @@ class OllamaClient:
 
     def __init__(
         self,
-        model: str = DEFAULT_MODEL,
-        base_url: str = OLLAMA_BASE_URL,
-        timeout: float = 300.0,
+        model: str = settings.OLLAMA_MODEL,
+        base_url: str = settings.OLLAMA_BASE_URL,
+        timeout: float = settings.OLLAMA_TIMEOUT,
     ):
         self.model = model
         self.base_url = base_url.rstrip("/")

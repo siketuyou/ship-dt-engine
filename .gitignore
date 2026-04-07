@@ -1,0 +1,6 @@
+.env
+data/output/
+data/upload/
+__pycache__/
+*.pyc
+models/paraphrase-multilingual-MiniLM-L12-v2

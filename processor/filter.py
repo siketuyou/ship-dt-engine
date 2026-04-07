@@ -26,10 +26,8 @@ import requests
 from bs4 import BeautifulSoup
 
 from models.schemas import RawArticle, KeywordConfig
-from processor.ac_engine import KeywordAC
 from models.schemas import FilteredItem
 from utils.logger import get_logger
-# filter.py 顶部新增导入
 from processor.ac_engine import KeywordAC, SemanticMatcher
 
 # 抓详情页的超时与重试

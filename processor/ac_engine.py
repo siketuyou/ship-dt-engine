@@ -1,6 +1,6 @@
 """
 AC 自动机封装 + 语义向量兜底匹配。
-将一组 {keyword_id: keyword_name} 编译成 Aho-Corasick 自动机，
+将一组 {keyword_id: keyword_name} 编译成 Aho-Corasick 自动机，models/paraphrase-multilingual-MiniLM-L12-v2
 search() 返回文本中命中的所有 keyword_id（去重）。
 
 依赖：pip install pyahocorasick sentence-transformers
@@ -55,11 +55,11 @@ class SemanticMatcher:
 
     # 推荐模型：多语言、中英混合效果好，模型约 120MB
     DEFAULT_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
-
+    DEFAULT_MODEL_DIR = "./models/paraphrase-multilingual-MiniLM-L12-v2"
     def __init__(
         self,
         keyword_map: Dict[int, str],
-        model_name: str = DEFAULT_MODEL,
+        model_dir: str = DEFAULT_MODEL_DIR,
         threshold: float = 0.65,
         max_sentences: int = 40,     # 最多取前 N 句，防止超长文本拖慢速度
     ):
@@ -79,7 +79,7 @@ class SemanticMatcher:
                 self._kid_list.append(kid)
                 self._kname_list.append(kname)
 
-        self._model = SentenceTransformer(model_name)
+        self._model = SentenceTransformer(model_dir)
 
         # 预计算关键词向量，shape: (num_keywords, hidden_dim)
         self._kw_embeddings: np.ndarray = self._model.encode(
@@ -133,7 +133,7 @@ class SemanticMatcher:
     def build(
         cls,
         keyword_map: Dict[int, str],
-        model_name: str = DEFAULT_MODEL,
+        model_dir: str = DEFAULT_MODEL_DIR,
         threshold: float = 0.65,
     ) -> "SemanticMatcher":
-        return cls(keyword_map, model_name=model_name, threshold=threshold)
+        return cls(keyword_map, model_dir=model_dir, threshold=threshold)
