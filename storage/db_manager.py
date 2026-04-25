@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from typing import List, Dict, Any, Optional, Union
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
@@ -111,4 +112,23 @@ class DatabaseManager:
     def get_raw_conn(self):
         """返回底层 pymysql 原生连接，供需要 cursor 的模块使用。"""
         return self.engine.raw_connection()
+
+    @contextmanager
+    def raw_conn(self):
+        """上下文管理器：自动归还连接到连接池。
+        用法：
+            with db.raw_conn() as conn:
+                cursor = conn.cursor()
+                ...
+                conn.commit()
+                cursor.close()
+        """
+        conn = self.engine.raw_connection()
+        try:
+            yield conn
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
         

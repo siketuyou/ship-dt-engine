@@ -10,11 +10,11 @@
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                     API 层 (FastAPI)                     │
+│                     API 层 (FastAPI)                    │
 │  api/main.py                                            │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │ 模型管理 API  │  │ 关键词管理    │  │ CSV 导入/下载 │  │
-│  └──────────────┘  └──────────────┘  └──────────────┘  │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │
+│  │ 模型管理 API  │  │ 关键词管理    │  │ CSV 导入/下载│   │
+│  └──────────────┘  └──────────────┘  └──────────────┘   │
 │  ┌──────────────────────────────────────────────────┐   │
 │  │  APScheduler (BackgroundScheduler)  Cron 定时触发 │   │
 │  └──────────────────────────────────────────────────┘   │
@@ -22,17 +22,19 @@
                          │ 调用
                          ▼
 ┌─────────────────────────────────────────────────────────┐
-│              Orchestrator（流水线调度器）                  │
+│              Orchestrator（流水线调度器）                │
 │  orchestrator/orchestrator.py                           │
 │                                                         │
 │  Step 1  关键词校验（DB）                                 │
-│  Step 2  Fetcher  ──────────────────────────────────┐   │
-│  Step 3  Filter   ──────────────────────────────────┤   │
+│  Step 2  load_fetcher → Fetcher（按 model_name 动态加载）│
+│  Step 3  Filter   ──────────────────────────────────┐   │
 │  Step 4  Cleaner  ──────────────────────────────────┤   │
 │  Step 5  Dedup    ──────────────────────────────────┤   │
 │  Step 6  Extractor ─────────────────────────────────┤   │
 │  Step 7  CsvWriter ─────────────────────────────────┤   │
-│  Step 8  CsvImporter（可选自动入库）────────────────────┘   │
+│  Step 8  CsvImporter（可选自动入库）─────────────────┘    │
+│                                                         │
+│  run() 返回 (ok, result_desc, csv_path) 三元组           │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -45,23 +47,27 @@
 | 文件 | 说明 |
 |------|------|
 | `fetchers/base_fetcher.py` | 抽象基类，定义 `fetch_all()` 接口，读取 DB 水位线 |
+| `fetchers/load_fetcher.py` | **Fetcher 工厂**：按 `model_name` 动态加载对应 Fetcher 类 |
 | `fetchers/csic/csic_fetcher.py` | CSIC 实现，翻页采集列表页 + 详情页正文 |
-| `fetchers/csic/csic_config.py` | 栏目配置表（`CHANNELS`），驱动多频道采集 |
 
+
+- **可插拔架构**：Orchestrator 不再硬编码 Fetcher，根据数据库中的 `model_name` 自动加载 `fetchers/{model_name}/{model_name}_fetcher.py` 中的 `{Modelname}Fetcher` 类
+- 加载失败抛出 `FetcherNotFoundError` / `FetcherLoadError`（见 `exception.py`）
 - 采用增量水位线（`incremental_spider_time`）防止重复采集
 - 支持多编码自动探测（UTF-8 / GBK / GB18030）
 - 输出：`List[RawArticle]`
+
+> 新增网站接入只需：在 `fetchers/<name>/` 下放 `<name>_fetcher.py`，类名 `<Name>Fetcher`，并在 `reptile_model` 表中将 `m_reptile_model_name` 设为 `<name>` 即可，无需改动 Orchestrator。
 
 ### Step 3 — Filter（关键词过滤）
 
 | 文件 | 说明 |
 |------|------|
-| `processor/filter.py` | 两关过滤：时间水位线 + AC自动机/语义向量 |
+| `processor/filter.py` | 关键词过滤：AC 自动机 + 语义向量兜底 |
 | `processor/ac_engine.py` | AC 自动机精确匹配 + `SemanticMatcher` 语义向量兜底 |
 
-- **关1**：`pub_time < min(关键词水位线)` → 丢弃
-- **关2-A**：AC 自动机精确/变体匹配（快）
-- **关2-B**：语义向量匹配兜底，阈值默认 0.65（慢，仅 AC 未命中时触发）
+- **关 A**：AC 自动机精确/变体匹配（快）
+- **关 B**：语义向量匹配兜底，阈值默认 0.65（慢，仅 AC 未命中时触发）
 - 输出：`List[FilteredItem]`（含 `matched_keyword_ids`）
 
 ### Step 4 — Cleaner（清洗）
@@ -121,11 +127,13 @@
 ```
 ship_digital_python/
 ├── api/
-│   └── main.py              # FastAPI 入口，REST 接口 + APScheduler
+│   └── main.py              # FastAPI 入口，REST 接口 + APScheduler（全局 DB 单例）
 ├── orchestrator/
-│   └── orchestrator.py      # 流水线调度器
+│   └── orchestrator.py      # 流水线调度器，run() 返回 (ok, msg, csv_path)
+├── exception.py             # 自定义异常体系（FetcherNotFound/Load/FetchError）
 ├── fetchers/
 │   ├── base_fetcher.py      # 采集器抽象基类
+│   ├── load_fetcher.py      # Fetcher 工厂（按 model_name 动态加载）
 │   └── csic/
 │       ├── csic_fetcher.py  # CSIC 采集实现
 │       └── csic_config.py   # 栏目配置
@@ -140,7 +148,7 @@ ship_digital_python/
 │   ├── prompts.py           # Prompt 构建
 │   └── dimension_loader.py  # 维度树加载
 ├── storage/
-│   ├── db_manager.py        # SQLAlchemy 数据库访问层
+│   ├── db_manager.py        # SQLAlchemy 数据库访问层（含 raw_conn() 上下文管理器）
 │   ├── csv_writer.py        # CSV 输出
 │   └── csv_importer.py      # CSV 批量入库
 ├── models/
@@ -162,9 +170,9 @@ ship_digital_python/
 ## 数据模型流转
 
 ```
-RawArticle          ← Fetcher 输出
+RawArticle          ← Fetcher 输出（按 model_name 动态加载）
     │
-    ▼ Filter（时间水位线 + AC + 语义）
+    ▼ Filter（AC + 语义匹配）
 FilteredItem        ← 含 matched_keyword_ids
     │
     ▼ Cleaner
@@ -211,9 +219,12 @@ CSV 文件 / MySQL
 | `CSIC_BASE_URL` | `http://www.cssc.net.cn` | 中国船舶集团官网 |
 | `DB_HOST` | `localhost:3306` | MySQL 数据库 |
 | `DB_NAME` | `ship_digital_db` | 数据库名 |
+| `DB_PASSWORD` | — | MySQL 密码（必填，从 `.env` 读取） |
 | `REQUEST_DELAY` | `1.5s` | 礼貌延迟，防封禁 |
 
 配置优先级：`.env` 文件 > 环境变量 > 代码默认值
+
+> 现在 API/Scheduler/Orchestrator 统一通过 `settings.db_url` 拼装连接串，不再在源码中硬编码用户名/密码。
 
 ---
 

@@ -10,11 +10,13 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from utils.logger import get_logger
 from orchestrator.orchestrator import Orchestrator
+from config.settings import settings
 
 logger = get_logger("Scheduler")
 
 # ── 配置区 ────────────────────────────────────────────────
-DB_URL       = "mysql+pymysql://root:Yxy201062@localhost:3306/ship_digital_db"
+
+DB_URL = settings.db_url
 MODEL_IDS    = [1]          # 支持多个爬虫模型并发调度
 SAMPLE_LIMIT = None         # 生产环境不限制
 OUTPUT_DIR   = "data/output"
@@ -26,8 +28,8 @@ def run_model(model_id: int):
     logger.info(f"Scheduler 触发 | model_id={model_id}")
     try:
         ok = Orchestrator(
-            db_url=DB_URL,
             model_id=model_id,
+            db_url=DB_URL,
             sample_limit=SAMPLE_LIMIT,
             output_dir=OUTPUT_DIR,
         ).run()

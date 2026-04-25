@@ -85,12 +85,12 @@ class ArticleFilter:
             return []
 
         total     = len(articles)
-        after_wm  = self._stage1_watermark(articles)
-        after_ac  = self._stage2_fetch_and_match(after_wm)
+        # after_wm  = self._stage1_watermark(articles)
+        after_ac  = self._stage2_fetch_and_match(articles)
 
         self.logger.info(
             f"model_id={self.model_id} | "
-            f"输入={total} 水位线后={len(after_wm)} AC后={len(after_ac)}"
+            f"水位线输入={total}，关键词过滤后={len(after_ac)}"
         )
         return after_ac
 
@@ -122,7 +122,7 @@ class ArticleFilter:
         return passed
 
     # ------------------------------------------------------------------
-    # 关2：抓详情页 → AC → （未命中）→ 语义
+    # 抓详情页 → AC → （未命中）→ 语义
     # ------------------------------------------------------------------
 
     def _stage2_fetch_and_match(self, articles: List[RawArticle]) -> List[FilteredItem]:
