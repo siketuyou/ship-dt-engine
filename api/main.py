@@ -7,6 +7,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List
+import consul
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -34,7 +35,7 @@ app = FastAPI(title="Spider Service")
 # ================================================================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -44,8 +45,8 @@ app.add_middleware(
 # 配置 & 全局单例
 # ================================================================
 DB_URL     = settings.db_url
-OUTPUT_DIR = "data/output"
-UPLOAD_DIR = Path("data/upload")
+OUTPUT_DIR = settings.OUTPUT_DIR
+UPLOAD_DIR = Path(settings.UPLOAD_DIR)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # 单例：整个进程共享同一个连接池
@@ -63,6 +64,62 @@ _scheduler.start()
 _running_locks: dict[int, bool] = {}
 _lock = threading.Lock()
 
+# ================================================================
+# Consul 服务注册与配置加载
+# ================================================================
+
+# 从 Consul 加载数据库配置（覆盖 settings 中的值）
+if settings.USE_CONSUL_CONFIG:
+    settings.load_from_consul()
+    # 重新初始化数据库管理器（因为 DB_URL 已变）
+    _db = DatabaseManager(settings.db_url)
+
+_service_id = None  # 用于存储 Consul 服务 ID
+
+@app.on_event("startup")
+def register_to_consul():
+    """启动时向 Consul 注册本服务"""
+    global _service_id
+    try:
+        c = consul.Consul(host=settings.CONSUL_HOST, port=settings.CONSUL_PORT)
+        # 服务 ID = 服务名 + 主机+端口
+        service_name = "spider-service"
+        service_port = settings.SERVICE_PORT
+        service_id = f"{service_name}-{settings.SERVICE_HOST}:{service_port}"
+        
+        # 注册健康检查（HTTP）
+        check = consul.Check.http(
+            url=f"http://{settings.SERVICE_HOST}:{service_port}/health",
+            interval="10s",
+            timeout="5s",
+            deregister="30s"
+        )
+        c.agent.service.register(
+            name=service_name,
+            service_id=service_id,
+            address=settings.SERVICE_HOST,   # 注意：应填写服务所在机器的实际内网IP
+            port=service_port,
+            check=check
+        )
+        _service_id = service_id
+        logger.info(f"✅ 服务已注册到 Consul: {service_name} (ID: {service_id})")
+    except Exception as e:
+        logger.error(f"❌ 注册服务到 Consul 失败: {e}")
+
+@app.on_event("shutdown")
+def deregister_from_consul():
+    """关闭时从 Consul 注销服务"""
+    if _service_id:
+        try:
+            c = consul.Consul(host=settings.CONSUL_HOST, port=settings.CONSUL_PORT)
+            c.agent.service.deregister(_service_id)
+            logger.info("✅ 已从 Consul 注销服务")
+        except Exception as e:
+            logger.error(f"❌ 注销服务失败: {e}")
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
 
 # ================================================================
 # 统一响应格式
