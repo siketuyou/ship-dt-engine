@@ -259,3 +259,4 @@ python scheduler/scheduler.py
 | 地理编码 | 高德地图 REST API |
 | 数据模型 | Pydantic v2 |
 | 配置管理 | pydantic-settings |
+| 配置管理 | pydantic-settings |

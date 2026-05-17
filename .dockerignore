@@ -1,0 +1,14 @@
+.git
+.gitignore
+.env
+.claude
+
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+data/
+*.md
+*.readme.md

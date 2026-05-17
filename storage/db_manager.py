@@ -8,17 +8,18 @@ from sqlalchemy.engine import Engine
 
 class DatabaseManager:
     """
-    基础数据库访问类 (DAO)
-    职责：管理数据库连接池，执行原生 SQL。
+    数据库访问层 (DAO)。统一接口：
+      query()       — SELECT，返回 List[Dict]
+      execute()     — INSERT/UPDATE/DELETE，返回 rowcount
+      insert()      — INSERT，返回 lastrowid（自增主键）
+      transaction() — 多语句原子事务，yield SQLAlchemy connection
     """
     def __init__(self, db_url: str):
-        # 初始化 SQLAlchemy Engine (自带连接池)
-        # db_url 格式: mysql+pymysql://user:pass@host:port/dbname
         self.engine: Engine = create_engine(
-            db_url, 
-            pool_size=10, 
+            db_url,
+            pool_size=10,
             max_overflow=20,
-            pool_recycle=3600
+            pool_recycle=3600,
         )
         self.logger = logging.getLogger(__name__)
 
@@ -31,10 +32,22 @@ class DatabaseManager:
             return [dict(row._mapping) for row in result]
 
     def execute(self, sql: str, params: Optional[Union[Dict[str, Any], tuple]] = ()) -> int:
-        """执行 INSERT/UPDATE/DELETE，返回影响行数"""
-        with self.engine.begin() as conn: # 使用 begin 自动开启事务
+        """执行 INSERT/UPDATE/DELETE，返回影响行数。"""
+        with self.engine.begin() as conn:
             result = conn.execute(text(sql), params)
             return result.rowcount
+
+    def insert(self, sql: str, params: Optional[Union[Dict[str, Any], tuple]] = ()) -> int:
+        """执行 INSERT，返回自增主键 lastrowid。"""
+        with self.engine.begin() as conn:
+            result = conn.execute(text(sql), params)
+            return result.lastrowid
+
+    @contextmanager
+    def transaction(self):
+        """多语句原子事务。yield SQLAlchemy connection，块结束自动 commit，异常自动 rollback。"""
+        with self.engine.begin() as conn:
+            yield conn
 
     # --- 针对 StateStore (L3) 的特定优化接口 ---
 
@@ -95,12 +108,12 @@ class DatabaseManager:
         找不到或已删除时抛出 ValueError。
         """
         sql = """
-            SELECT m_reptile_model_id   AS model_id,
-                   m_reptile_model_name AS model_name,
-                   m_reptile_model_web  AS target_url,
-                   m_reptile_model_state AS state,
-                   m_reptile_model_address AS model_address,
-                   m_reptile_model_time AS created_at
+            SELECT m_reptile_model_id          AS model_id,
+                   m_reptile_model_name        AS display_name,
+                   m_reptile_model_script_address AS fetcher_name,
+                   m_reptile_model_web          AS target_url,
+                   m_reptile_model_state        AS state,
+                   m_reptile_model_time         AS created_at
             FROM   reptile_model
             WHERE  m_reptile_model_id = :model_id
               AND  deleted = 0
@@ -109,20 +122,10 @@ class DatabaseManager:
         if not rows:
             raise ValueError(f"model_id={model_id} 不存在或已删除")
         return rows[0]
-    def get_raw_conn(self):
-        """返回底层 pymysql 原生连接，供需要 cursor 的模块使用。"""
-        return self.engine.raw_connection()
-
     @contextmanager
     def raw_conn(self):
-        """上下文管理器：自动归还连接到连接池。
-        用法：
-            with db.raw_conn() as conn:
-                cursor = conn.cursor()
-                ...
-                conn.commit()
-                cursor.close()
-        """
+        """低层原生连接上下文管理器，异常时自动 rollback，退出时归还到连接池。
+        优先使用 query()/execute()/insert()/transaction() 高层接口。"""
         conn = self.engine.raw_connection()
         try:
             yield conn

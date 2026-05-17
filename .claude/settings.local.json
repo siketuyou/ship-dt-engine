@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\10713\\\\Desktop\\\\ship_digital_python\" -Recurse -Force)",
+      "Bash(Select-Object -Property FullName, PSIsContainer)",
+      "Bash(ConvertTo-Csv -NoTypeInformation)",
+      "Bash(curl -s http://localhost:8000/api/fetcher/list)",
+      "Bash(git restore *)"
+    ]
+  }
+}

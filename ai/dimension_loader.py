@@ -2,7 +2,12 @@
 from __future__ import annotations
 
 import time
+from typing import TYPE_CHECKING
+
 from utils.logger import get_logger
+
+if TYPE_CHECKING:
+    from storage.db_manager import DatabaseManager
 
 logger = get_logger("DimensionLoader")
 
@@ -11,26 +16,26 @@ _cache_ts: float = 0.0
 _CACHE_TTL: float = 600.0
 
 
-def load_dimension_tree(db_conn=None) -> dict:
+def load_dimension_tree(db: "DatabaseManager | None" = None) -> dict:
     global _cache, _cache_ts
 
     now = time.time()
     if _cache and (now - _cache_ts) < _CACHE_TTL:
         return _cache
 
-    if db_conn is None:
-        logger.warning("db_conn 为 None，使用静态维度树兜底（不写缓存）")
-        return _static_fallback()   # ← 不写 _cache，下次还会重试
+    if db is None:
+        logger.warning("db 为 None，使用静态维度树兜底（不写缓存）")
+        return _static_fallback()
 
     try:
-        tree = _query_tree(db_conn)
-        _cache = tree              # ← 只有真实查询成功才写缓存
+        tree = _query_tree(db)
+        _cache = tree
         _cache_ts = now
         logger.info(f"维度树已刷新：{len(tree)} 个一级维度")
         return tree
     except Exception as e:
         logger.error(f"维度树加载失败，降级静态树：{e}")
-        return _static_fallback()  # ← 失败也不写缓存
+        return _static_fallback()
 
 
 def invalidate_cache():
@@ -39,42 +44,37 @@ def invalidate_cache():
     _cache_ts = 0.0
 
 
-def _query_tree(db_conn) -> dict:
-    # 逻辑不变，复用原有实现
-    cursor = db_conn.cursor()
+def _query_tree(db: "DatabaseManager") -> dict:
     tree: dict = {}
     dim1_index: dict[int, str] = {}
     dim2_index: dict[int, str] = {}
 
-    cursor.execute(
+    for row in db.query(
         "SELECT device_class_id, device_class_name "
         "FROM device_class WHERE deleted = 0 OR deleted IS NULL "
         "ORDER BY device_class_id"
-    )
-    for row in cursor.fetchall():
-        cid, cname = row[0], row[1]
+    ):
+        cid, cname = row["device_class_id"], row["device_class_name"]
         dim1_index[cid] = cname
         tree[cname] = {"id": cid, "children": {}}
 
-    cursor.execute(
+    for row in db.query(
         "SELECT device_style_id, device_style_name, device_style_class_id "
         "FROM device_style WHERE deleted = 0 OR deleted IS NULL "
         "ORDER BY device_style_id"
-    )
-    for row in cursor.fetchall():
-        sid, sname, parent_cid = row[0], row[1], row[2]
+    ):
+        sid, sname, parent_cid = row["device_style_id"], row["device_style_name"], row["device_style_class_id"]
         dim2_index[sid] = sname
         parent_name = dim1_index.get(parent_cid)
         if parent_name and parent_name in tree:
             tree[parent_name]["children"][sname] = {"id": sid, "directions": []}
 
-    cursor.execute(
+    for row in db.query(
         "SELECT device_type_id, device_type_name, device_type_style_id "
         "FROM device_type WHERE deleted = 0 OR deleted IS NULL "
         "ORDER BY device_type_id"
-    )
-    for row in cursor.fetchall():
-        tid, tname, parent_sid = row[0], row[1], row[2]
+    ):
+        tid, tname, parent_sid = row["device_type_id"], row["device_type_name"], row["device_type_style_id"]
         parent_sname = dim2_index.get(parent_sid)
         if not parent_sname:
             continue
@@ -85,7 +85,6 @@ def _query_tree(db_conn) -> dict:
                 )
                 break
 
-    cursor.close()
     return tree
 def _static_fallback() -> dict:
     return {

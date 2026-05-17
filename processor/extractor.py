@@ -28,17 +28,17 @@ class Extractor:
     def __init__(
         self,
         client: Optional[OllamaClient] = None,
-        db_conn=None,
+        db=None,
     ):
-        self.client   = client or OllamaClient()
-        self.db_conn  = db_conn
-        self.logger   = get_logger(self.__class__.__name__)
+        self.client = client or OllamaClient()
+        self.db     = db
+        self.logger = get_logger(self.__class__.__name__)
         self._tree: dict = {}
 
     # ── 公开接口 ─────────────────────────────────────────────────────────
 
     def run(self, items: List[CleanedItem]) -> List[EnrichedItem]:
-        self._tree = load_dimension_tree(self.db_conn)
+        self._tree = load_dimension_tree(self.db)
         system_prompt = build_extract_system(self._tree)
 
         # 构建合法 dim3 id 集合，用于校验 LLM 输出
@@ -79,7 +79,6 @@ class Extractor:
                         f"       ⚠ dim3_id={llm.dim3_id} 不在维度树中，已清空"
                     )
                     llm.dim3_id = None
-                    llm.dim3_name = None
 
                 return self._assemble(item, llm)
 
@@ -94,9 +93,28 @@ class Extractor:
 
     def _assemble(self, item: CleanedItem, llm: LLMExtractResult) -> EnrichedItem:
         now = datetime.now()
-        if llm.is_target_info:
-            location = llm.device_location or item.raw_location
-            lng, lat  = geocode(location) if location else (None, None)
+        lng, lat = None, None
+        location = None
+
+        if llm.device_location:
+            # 优先：正文中明确出现的地名，精确度最高
+            location = llm.device_location
+            lng, lat = geocode(location)
+
+        elif llm.device_using_unit:
+            # 次选：直接用单位全称查高德，可获得厂区级精确坐标
+            # 高德支持公司名检索，如"沪东中华造船集团有限公司"可定位到长兴岛厂区
+            lng, lat = geocode(llm.device_using_unit)
+            if lng:
+                # 坐标获取成功（含城市静态兜底），用单位名作为地址记录
+                location = llm.device_using_unit
+            # 若彻底失败，location/lng/lat 均保持 None
+
+        elif item.raw_location:
+            # 兜底：Fetcher 元数据中的原始位置字段
+            location = item.raw_location
+            lng, lat = geocode(location)
+
         return EnrichedItem(
             device_name=llm.device_name or item.title,
             device_class_id=llm.dim1_id,
@@ -106,9 +124,9 @@ class Extractor:
             device_price=llm.device_price,
             device_using_unit=llm.device_using_unit,
             device_country_id=COUNTRY_NAME_MAP.get(llm.country_name) if llm.country_name else None,
-            device_location=llm.device_location or item.raw_location,
-            device_longitude=lng,   # ← 自动填充
-            device_latitude=lat,    # ← 自动填充
+            device_location=location,
+            device_longitude=lng,
+            device_latitude=lat,
             device_img=",".join(item.img_urls) if item.img_urls else None,
             device_video=",".join(item.video_urls) if item.video_urls else None,
             device_introduce=llm.device_introduce,

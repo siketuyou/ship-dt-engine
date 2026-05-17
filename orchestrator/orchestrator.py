@@ -73,7 +73,7 @@ class Orchestrator:
 
         # ── Step 2: Fetcher ──────────────────────────────────
         model_config = self.db.get_model_config(self.model_id)
-        model_name = model_config["model_name"]
+        model_name = model_config.get("fetcher_name") or ""
         fetcher = load_fetcher(
             model_name=model_name,
             model_id=self.model_id,
@@ -106,57 +106,47 @@ class Orchestrator:
         sample = deduped[: self.sample_limit] if self.sample_limit else deduped
         logger.info(f"[6] Extractor 启动，样本数={len(sample)}")
 
-        raw_conn = self.db.get_raw_conn() if hasattr(self.db, "get_raw_conn") else None
-        enriched = []
-        csv_path = None
-        try:
-            enriched = Extractor(db_conn=raw_conn).run(sample)
-            logger.info(f"[6] Extractor 完成：{len(sample)} → {len(enriched)} 条")
+        enriched = Extractor(db=self.db).run(sample)
+        logger.info(f"[6] Extractor 完成：{len(sample)} → {len(enriched)} 条")
 
-            if not enriched:
-                msg = "Extractor 输出为空，终止"
-                logger.error(msg)
-                return False, msg, None
+        if not enriched:
+            msg = "Extractor 输出为空，终止"
+            logger.error(msg)
+            return False, msg, None
 
-            # ── Step 7: CsvWriter ────────────────────────────────
-            kw_names = [kw["keyword_name"] for kw in kws]
+        # ── Step 7: CsvWriter ────────────────────────────────
+        kw_names = [kw["keyword_name"] for kw in kws]
+        csv_path = self.csv_writer.write(
+            items=enriched,
+            model_id=self.model_id,
+            model_name=kws[0].get("model_name", str(self.model_id)) if kws else str(self.model_id),
+            keywords=kw_names,
+            total_fetched=len(raw_articles),
+            total_filtered=len(filtered),
+            total_input=len(sample),
+        )
+        logger.info(f"[7] CSV 已输出：{csv_path}")
 
-            csv_path = self.csv_writer.write(
-                items=enriched,
-                model_id=self.model_id,
-                model_name=kws[0].get("model_name", str(self.model_id)) if kws else str(self.model_id),
-                keywords=kw_names,
-                total_fetched=len(raw_articles),
-                total_filtered=len(filtered),
-                total_input=len(sample),
-                db_conn=raw_conn,
-                user_id=self.user_id,
-            )
-            logger.info(f"[7] CSV 已输出：{csv_path}")
-
-            # ── Step 8: CsvImporter（自动入库） ──────────────────
-            if self.auto_import:
-                logger.info(f"[8] 开始自动入库：{csv_path}")
-                try:
-                    result = CsvImporter(raw_conn).run(
-                        csv_path=csv_path,
-                        model_log_id=self.model_id,
-                        user_id=self.user_id,
-                    )
-                    logger.info(
-                        f"[8] 入库完成：总={result['total']} "
-                        f"成功={result['success']} 失败={result['failed']}"
-                    )
-                    if result["errors"]:
-                        for err in result["errors"][:10]:
-                            logger.warning(f"  入库错误：{err}")
-                except Exception as e:
-                    logger.error(f"[8] 自动入库异常：{e}", exc_info=True)
-            else:
-                logger.info("[8] 跳过自动入库，CSV 已保存供手动录入")
-        finally:
-            if raw_conn:
-                raw_conn.close()
+        # ── Step 8: CsvImporter（自动入库） ──────────────────
+        if self.auto_import:
+            logger.info(f"[8] 开始自动入库：{csv_path}")
+            try:
+                result = CsvImporter(self.db).run(
+                    csv_path=csv_path,
+                    model_log_id=self.model_id,
+                    user_id=self.user_id,
+                )
+                logger.info(
+                    f"[8] 入库完成：总={result['total']} "
+                    f"成功={result['success']} 失败={result['failed']}"
+                )
+                if result["errors"]:
+                    for err in result["errors"][:10]:
+                        logger.warning(f"  入库错误：{err}")
+            except Exception as e:
+                logger.error(f"[8] 自动入库异常：{e}", exc_info=True)
+        else:
+            logger.info("[8] 跳过自动入库，CSV 已保存供手动录入")
 
         elapsed = (datetime.now() - start).seconds
         msg = f"流水线完成，产出 {len(enriched)} 条，耗时 {elapsed}s，CSV={csv_path}"

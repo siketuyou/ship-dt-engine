@@ -3,7 +3,7 @@
 import csv
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 from models.schemas import EnrichedItem
 from utils.logger import get_logger
 
@@ -31,11 +31,9 @@ class CsvWriter:
         model_id: int,
         model_name: str,
         keywords: List[str],
-        total_fetched: int,       # Fetcher 抓取总数
-        total_filtered: int,      # Filter 后数量
-        total_input: int,         # 进入 Extractor 的数量
-        db_conn=None,
-        user_id: int = 0,
+        total_fetched: int,
+        total_filtered: int,
+        total_input: int,
     ) -> Path:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"model_{model_id}_{ts}.csv"
@@ -79,23 +77,3 @@ class CsvWriter:
             raise
         return filepath
 
-    @staticmethod
-    def _write_log(db_conn, model_log_id, log_text, total, success, user_id):
-        try:
-            cursor = db_conn.cursor()
-            cursor.execute(
-                """
-                INSERT INTO csv_enter_logs
-                    (model_log_id, csv_enter_logs, csv_enter_number,
-                     csv_enter_success_number, csv_enter_logs_time,
-                     csv_enter_user_id, deleted)
-                VALUES (%s, %s, %s, %s, %s, %s, 0)
-                """,
-                (model_log_id, log_text, total, success, datetime.now(), user_id),
-            )
-            db_conn.commit()
-            cursor.close()
-            logger.info(f"csv_enter_logs 写入成功")
-        except Exception as e:
-            logger.error(f"csv_enter_logs 写入失败：{e}")
-            db_conn.rollback()

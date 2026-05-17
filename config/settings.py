@@ -33,10 +33,6 @@ class Settings(BaseSettings):
     AMAP_KEY: str = ""
     AMAP_URL: str = "https://restapi.amap.com/v3/geocode/geo"
 
-    # ── Java 后端接口 ──────────────────────────────
-    JAVA_API_BASE_URL: str = "http://localhost:8080"
-    JAVA_API_TOKEN: str = ""
-
     # ── 数据库（密码必须从.env读取，无默认值） ────────
     DB_HOST: str = "localhost"
     DB_PORT: int = 3306
@@ -45,7 +41,7 @@ class Settings(BaseSettings):
     DB_NAME: str = "ship_digital_db"
 
     # ── 服务自身 ───────────────────────────────────
-    SERVICE_HOST: str = "localhost"   # 注册到 Consul 的对外 IP/域名
+    SERVICE_HOST: str = "192.168.31.217"   # 注册到 Consul 的对外 IP/域名
     SERVICE_PORT: int = 8000
 
     # ── CORS（逗号分隔的允许来源列表） ────────────────
@@ -56,9 +52,9 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "data/upload"
 
     # ── Consul ────────────────────────────────────
-    CONSUL_HOST: str = "localhost"
+    CONSUL_HOST: str = "192.168.31.75"
     CONSUL_PORT: int = 8500
-    CONSUL_KV_PREFIX: str = "config/database"
+    CONSUL_KV_KEY: str = "config/ship-backend-app,dev/data"
     USE_CONSUL_CONFIG: bool = False   # 云端默认关闭，使用环境变量直接配置
 
     class Config:
@@ -77,26 +73,31 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
 
     def load_from_consul(self):
-        """从 Consul KV 加载数据库配置并覆盖当前值"""
+        """从 Consul KV 加载数据库配置（Spring Cloud Config YAML 格式）"""
         if not self.USE_CONSUL_CONFIG:
             return
+        import re
+        import yaml
         try:
             c = consul.Consul(host=self.CONSUL_HOST, port=self.CONSUL_PORT)
-            for key in ["host", "port", "username", "password", "dbname"]:
-                full_key = f"{self.CONSUL_KV_PREFIX}/{key}"
-                index, data = c.kv.get(full_key)
-                if data and data['Value']:
-                    value = data['Value'].decode('utf-8')
-                    if key == "host":
-                        self.DB_HOST = value
-                    elif key == "port":
-                        self.DB_PORT = int(value)
-                    elif key == "username":
-                        self.DB_USER = value
-                    elif key == "password":
-                        self.DB_PASSWORD = value
-                    elif key == "dbname":
-                        self.DB_NAME = value
+            _, data = c.kv.get(self.CONSUL_KV_KEY)
+            if not (data and data["Value"]):
+                print("⚠️ Consul KV 无数据，使用本地配置")
+                return
+            cfg = yaml.safe_load(data["Value"].decode("utf-8"))
+            ds = cfg["spring"]["datasource"]
+
+            # 解析 JDBC URL: jdbc:mysql://host:port/dbname?...
+            m = re.match(r"jdbc:mysql://([^:/]+):(\d+)/([^?]+)", ds["url"])
+            if m:
+                raw_host = m.group(1)
+                # Java 存的是 127.0.0.1（它自己用），外部连要换成 Consul 所在 IP
+                self.DB_HOST = self.CONSUL_HOST if raw_host == "127.0.0.1" else raw_host
+                self.DB_PORT = int(m.group(2))
+                self.DB_NAME = m.group(3)
+
+            self.DB_USER = ds["username"]
+            self.DB_PASSWORD = ds["password"]
             print(f"✓ 从 Consul 加载数据库配置: {self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}")
         except Exception as e:
             print(f"⚠️ 从 Consul 加载配置失败（将使用本地配置）: {e}")
@@ -105,6 +106,7 @@ class Settings(BaseSettings):
 # 全局单例
 settings = Settings()
 settings.DATA_DIR.mkdir(parents=True, exist_ok=True)
+settings.load_from_consul()  # 在校验前加载，让 Consul 值覆盖本地空值
 
 if not settings.DB_PASSWORD:
     raise ValueError("DB_PASSWORD 未配置，请检查 .env 文件或环境变量")

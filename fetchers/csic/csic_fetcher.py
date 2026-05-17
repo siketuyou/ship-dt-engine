@@ -1,6 +1,7 @@
 import re
 import sys
 import requests
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -12,9 +13,70 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from models.schemas import RawArticle
-from fetchers.base_fetcher import BaseFetcher
-from fetchers.csic.csic_config import CHANNELS, ColumnConfig, Selectors
 from config.settings import settings
+from fetchers.base_fetcher import BaseFetcher
+
+
+@dataclass
+class Selectors:
+    """CSS selectors for one CSIC column."""
+
+    list_item: str
+    list_item_fragment: str
+    title: str
+    pub_time: str
+    body: str
+    img: str = "div.article_con img"
+
+
+@dataclass
+class ColumnConfig:
+    channel_id: str
+    column_id: str
+    name: str
+    page_size: int = 10
+    selectors: Selectors = field(default_factory=lambda: Selectors(
+        list_item="#comp_164 > ul > li",
+        list_item_fragment="li",
+        title="a",
+        pub_time="span",
+        body="div.article_con",
+    ))
+
+    @property
+    def list_url(self) -> str:
+        return f"{settings.CSIC_BASE_URL}/{self.channel_id}/{self.column_id}/index.html"
+
+    def page_url(self, page_index: int, total_pages: int, page_param: str) -> str:
+        if page_index == 1:
+            return self.list_url
+        offset = total_pages - (page_index - 1)
+        return (
+            f"{settings.CSIC_BASE_URL}/{self.channel_id}/{self.column_id}"
+            f"/index_{page_param}_{offset}.html"
+        )
+
+
+_DEFAULT_SEL = Selectors(
+    list_item="ul.olist_list > li",
+    list_item_fragment="ul.olist_list > li",
+    title="a",
+    pub_time="span",
+    body="div.article_con",
+)
+
+CHANNELS: list[ColumnConfig] = [
+    ColumnConfig("n10", "n67", "科技创新 / 科研动态", selectors=_DEFAULT_SEL),
+    ColumnConfig("n10", "n68", "科技创新 / 科研领域", selectors=_DEFAULT_SEL),
+    ColumnConfig("n10", "n69", "科技创新 / 研究成果", selectors=_DEFAULT_SEL),
+    ColumnConfig("n10", "n70", "科技创新 / 科研院所", selectors=_DEFAULT_SEL),
+    ColumnConfig("n5", "n18", "新闻中心 / 集团要闻", selectors=_DEFAULT_SEL),
+    ColumnConfig("n5", "n19", "新闻中心 / 媒体聚焦", selectors=_DEFAULT_SEL),
+]
+
+CHANNEL_MAP: dict[tuple[str, str], ColumnConfig] = {
+    (c.channel_id, c.column_id): c for c in CHANNELS
+}
 
 
 class CsicFetcher(BaseFetcher):
@@ -104,28 +166,14 @@ class CsicFetcher(BaseFetcher):
             if since and pub_time and pub_time <= since:
                 stop_crawling = True
                 break
-            content, img_urls = self._fetch_detail(item["url"], config.selectors)
-            collected.append(RawArticle(
-                model_id=self.model_id,
-                keyword_id=None,
-                source="csic_news",
-                url=item["url"],
-                title=item["title"],
-                content=content,
-                pub_time=pub_time,
-                img_urls=img_urls,
-            ))
+            collected.append(self._build_article(item, config.selectors))
 
         for page_num in range(2, total_pages + 1):
             if stop_crawling:
                 break
 
             # 所有页都用片段 URL（包括第1页）
-            offset = total_pages - (page_num - 1)
-            frag_url = (
-                f"{settings.CSIC_BASE_URL}/{config.channel_id}/{config.column_id}"
-                f"/index_{page_param}_{offset}.html"
-            )
+            frag_url = config.page_url(page_num, total_pages, page_param)
             try:
                 resp = self.http.get(frag_url)
                 resp.raise_for_status()
@@ -149,20 +197,23 @@ class CsicFetcher(BaseFetcher):
                     stop_crawling = True
                     break
 
-                content, img_urls = self._fetch_detail(item["url"], config.selectors)
-                article = RawArticle(
-                    model_id=self.model_id,
-                    keyword_id=None,
-                    source="csic_news",
-                    url=item["url"],
-                    title=item["title"],
-                    content=content,
-                    pub_time=pub_time,
-                    img_urls=img_urls,
-                )
-                collected.append(article)
+                collected.append(self._build_article(item, config.selectors))
 
         return collected
+
+    def _build_article(self, item: dict, selectors: Selectors) -> RawArticle:
+        content, img_urls = self._fetch_detail(item["url"], selectors)
+        return RawArticle(
+            model_id=self.model_id,
+            keyword_id=None,
+            source="csic_news",
+            url=item["url"],
+            title=item["title"],
+            content=content,
+            pub_time=item["pub_time"],
+            img_urls=img_urls,
+        )
+
     def _fetch_detail(
         self, url: str, selectors: Selectors
     ) -> tuple[str, list[str]]:
@@ -194,7 +245,7 @@ class CsicFetcher(BaseFetcher):
 
             img_urls = []
             if body_tag:
-                for img in body_tag.select("img"):
+                for img in body_tag.select(selectors.img):
                     src = img.get("src")
                     if src:
                         img_urls.append(urljoin(url, str(src)))

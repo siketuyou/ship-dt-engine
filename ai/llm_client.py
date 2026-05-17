@@ -32,9 +32,10 @@ class OllamaClient:
         self.timeout = timeout
         self.logger = get_logger(self.__class__.__name__)
 
-    def chat(self, system: str, user: str) -> str:
+    def chat(self, system: str, user: str, format: Optional[str] = None) -> str:
         """
         发送一次 chat 请求，返回 assistant 纯文本回复。
+        format="json" 时通知 Ollama 约束模型只输出 JSON。
         """
         payload = {
             "model": self.model,
@@ -44,6 +45,8 @@ class OllamaClient:
                 {"role": "user", "content": user},
             ],
         }
+        if format:
+            payload["format"] = format
         try:
             resp = httpx.post(
                 f"{self.base_url}/api/chat",
@@ -61,18 +64,24 @@ class OllamaClient:
 
     def extract_json(self, system: str, user: str) -> dict:
         """
-        调用 chat 后，从回复中解析第一个 JSON 对象。
+        调用 chat 后，从回复中解析第一个完整 JSON 对象。
         DeepSeek 有时会在 <think>...</think> 包裹推理，需要剥离。
+        用增量解析代替贪婪 regex，避免嵌套大括号或尾部杂文导致解析失败。
         """
-        raw = self.chat(system, user)
+        raw = self.chat(system, user, format="json")
 
         # 1. 剥离 <think>...</think> 块（DeepSeek-R1 推理痕迹）
         raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
 
-        # 2. 提取第一个 {...} JSON 块
-        match = re.search(r"\{.*\}", raw, re.DOTALL)
-        if not match:
-            self.logger.warning(f"未找到 JSON，原始回复：{raw[:200]}")
-            raise ValueError("LLM 回复中未找到合法 JSON")
+        # 2. 逐字符定位第一个合法 JSON 对象（增量解析，不依赖 regex）
+        decoder = json.JSONDecoder()
+        for i, ch in enumerate(raw):
+            if ch == "{":
+                try:
+                    obj, _ = decoder.raw_decode(raw, i)
+                    return obj
+                except json.JSONDecodeError:
+                    continue
 
-        return json.loads(match.group())
+        self.logger.warning(f"未找到合法 JSON，原始回复：{raw[:300]}")
+        raise ValueError("LLM 回复中未找到合法 JSON")

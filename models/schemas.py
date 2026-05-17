@@ -81,12 +81,9 @@ class LLMExtractResult(BaseModel):
     device_location: Optional[str] = None
     device_introduce: Optional[str] = None
     dim1_id: Optional[int] = None
-    dim1_name: Optional[str] = None
     dim2_id: Optional[int] = None
-    dim2_name: Optional[str] = None
-    dim3_id: Optional[int] = None          
-    dim3_name: Optional[str] = None
-    device_keywords: Optional[str] = None  # 新增：具体技术关键词，逗号分隔
+    dim3_id: Optional[int] = None
+    device_keywords: Optional[str] = None
     country_name: Optional[str] = None
 
 

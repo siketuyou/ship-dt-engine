@@ -9,6 +9,9 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 import numpy as np
 
+# 模块级模型缓存，避免每次 ArticleFilter 实例化都重新加载 120MB 模型
+_st_model_cache: Dict[str, "SentenceTransformer"] = {}
+
 
 class KeywordAC:
     """
@@ -79,7 +82,9 @@ class SemanticMatcher:
                 self._kid_list.append(kid)
                 self._kname_list.append(kname)
 
-        self._model = SentenceTransformer(model_dir)
+        if model_dir not in _st_model_cache:
+            _st_model_cache[model_dir] = SentenceTransformer(model_dir)
+        self._model = _st_model_cache[model_dir]
 
         # 预计算关键词向量，shape: (num_keywords, hidden_dim)
         self._kw_embeddings: np.ndarray = self._model.encode(
